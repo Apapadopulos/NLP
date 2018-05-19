@@ -1,0 +1,259 @@
+---
+title: "Support Vector Machines"
+output:
+  pdf_document: default
+  html_notebook: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kernlab)
+```
+
+# Practice 3: Text Classification - Sentiment Analysis Twitter. 
+
+### Import Data and Create Train, Test, and Validation Sets
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+library(tm)
+library(e1071)
+library(SnowballC)
+library(caret)
+
+train_data <- read.csv("/Users/Angel/Documents/IE Business School/MBD/Virtual Machine Shared Folder/ML II/practice_3/training.csv", stringsAsFactors = FALSE)
+test_data <-  read.csv("/Users/Angel/Documents/IE Business School/MBD/Virtual Machine Shared Folder/ML II/practice_3/test.csv", stringsAsFactors = FALSE)
+
+train_data<- train_data[,1:10]
+test_data<- test_data[,1:9]
+
+# Randomize the dataset to facilitate the training process
+set.seed(123)
+train_data1 <- train_data[sample(nrow(train_data)), ]
+train_data2 <- train_data[sample(nrow(train_data1)), ]
+
+#Create Validation set
+splitdf <- function(dataframe, seed=NULL) {
+  if (!is.null(seed)) set.seed(seed)
+ 	index <- 1:nrow(dataframe)
+ 	trainindex <- sample(index, trunc(length(index)/1.5))
+ 	trainset <- dataframe[trainindex, ]
+ 	testset <- dataframe[-trainindex, ]
+ 	list(trainset=trainset,testset=testset)
+}
+splits <- splitdf(train_data2, seed=1)
+training <- splits$trainset
+validation <- splits$testset
+
+```
+
+### Process Training and Validation Sets
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+
+# Join sets for processing
+dataset<- rbind(training, validation)
+
+# Convert the target variable ('airline_sentiment') from character to factor.
+dataset$airline_sentiment <- as.factor(dataset$airline_sentiment)
+
+#Process text for document term matrix
+corpus <- Corpus(VectorSource(dataset$text))
+
+cleanCorpus <- function(corpus) {
+  corpus <-tm_map(corpus, stemDocument)
+  corpus.tmp <- tm_map(corpus,removePunctuation)
+  corpus.tmp <- tm_map(corpus.tmp,stripWhitespace)
+  corpus.tmp <- tm_map(corpus.tmp,removeWords,stopwords("en"))
+  return(corpus.tmp)
+}
+
+corpus.clean <- cleanCorpus(corpus)
+
+dtm <- DocumentTermMatrix(corpus.clean,control = list(weighting= function(x) weightBin(x)))
+dtm <- removeSparseTerms(dtm, .99)
+
+dataset.train <- dataset[1:4666,]
+dataset.validation <- dataset[4667:7000,]
+
+dtm.train <- dtm[1:4666,]
+dtm.validation <- dtm[4667:7000,]
+
+corpus.clean.train <- corpus.clean[1:4666]
+corpus.clean.validation <- corpus.clean[4667:7000]
+
+X <- as.matrix(dtm.train)
+y <- dataset.train$airline_sentiment
+
+training_data <- as.data.frame(cbind(y,X))
+validation_data <- as.data.frame(as.matrix(dtm.validation))
+```
+
+Use the functions in `e1071` package to create an SVM model for the training data
+```{r}
+sv <- svm(y~., training_data, type="C-classification", kernel="sigmoid", cost=1)
+```
+
+Evaluate the SVM model in terms of Accuracy
+¿Have we improved the Naive Bayes model?
+
+Predict and compute the confusion matrix
+```{r}
+prediction <- predict(sv, validation_data)
+table("Predictions"= prediction,  "Actual" = dataset.validation$airline_sentiment )
+
+```
+
+Calculate the accuracy from the confusion matrix
+```{r}
+acc <- function(table){
+  TP = table[1,1];  # true positives
+  TN = table[2,2];  # true negatives
+  FP = table[1,2];  # false positives
+  FN = table[2,1];  # false negatives
+  acc = (TP + TN)/(TP + TN + FP + FN)
+  return(acc)
+}
+acc(table("Predictions"= prediction,  "Actual" = dataset.validation$airline_sentiment ))
+```
+As expected, our SVM model is significantly better than the more basic NB model.
+
+
+Let's try to tune SVM parameters to further improve the model performance
+```{r}
+#Number of folds
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           verboseIter = TRUE)
+#levels of C
+cv.svm <- train(X,y,
+                method="svmRadial",
+                preProc = c("center", "scale"),
+                tuneLength = 5,
+                metric = "Accuracy",
+                trControl = fitControl)
+
+```
+
+
+```{r}
+cv.svm.prediction <- predict(cv.svm, validation_data)
+table("Predictions"= cv.svm.prediction,  "Actual" = dataset.validation$airline_sentiment )
+```
+
+
+```{r}
+acc(table("Predictions"= cv.svm.prediction,  "Actual" = dataset.validation$airline_sentiment ))
+```
+
+### Process in all training set for predicting actual test set
+
+Process on all training set
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+# Randomize the dataset to facilitate the training process
+#set.seed(123)
+#dataset <- dataset[sample(nrow(dataset)), ]
+#dataset <- dataset[sample(nrow(dataset)), ]
+
+#Join train and test data for document term matrix.
+
+vars<- c("tweet_id","airline", "name", "retweet_count", "text", "tweet_coord", "tweet_created", "tweet_location", "user_timezone" )
+train_data3<- train_data[,vars]
+
+dataset<- rbind(train_data3, test_data)
+
+# Convert the target variable ('airline_sentiment') from character to factor.
+train_data$airline_sentiment <- as.factor(train_data$airline_sentiment)
+
+#process text
+corpus <- Corpus(VectorSource(dataset$text))
+
+
+cleanCorpus <- function(corpus) {
+  corpus <-tm_map(corpus, stemDocument)
+  corpus.tmp <- tm_map(corpus,removePunctuation)
+  corpus.tmp <- tm_map(corpus.tmp,stripWhitespace)
+  corpus.tmp <- tm_map(corpus.tmp,removeWords,stopwords("en"))
+  return(corpus.tmp)
+}
+
+corpus.clean <- cleanCorpus(corpus)
+
+dtm <- DocumentTermMatrix(corpus.clean,control = list(weighting= function(x) weightBin(x)))
+dtm <- removeSparseTerms(dtm, .99)
+
+dataset.train <- dataset[1:7000,]
+dataset.test <- dataset[7001:14640,]
+
+dtm.train <- dtm[1:7000,]
+dtm.test <- dtm[7001:14640,]
+
+corpus.clean.train <- corpus.clean[1:7000]
+corpus.clean.test <- corpus.clean[7001:14640]
+
+X <- as.matrix(dtm.train)
+y <- train_data$airline_sentiment
+
+training_data <- as.data.frame(cbind(y,X))
+testing_data <- as.data.frame(as.matrix(dtm.test))
+```
+
+Use the functions in `e1071` package to create an SVM model for the training data
+```{r}
+sv1 <- svm(y~., training_data, type="C-classification", kernel="sigmoid", cost=1)
+```
+
+Evaluate the SVM model in terms of Accuracy
+¿Have we improved the Naive Bayes model?
+
+Predict and compute the confusion matrix
+```{r}
+prediction <- predict(sv1, testing_data)
+#table("Predictions"= prediction,  "Actual" = dataset.test$airline_sentiment )
+
+```
+
+Calculate the accuracy from the confusion matrix
+```{r}
+acc <- function(table){
+  TP = table[1,1];  # true positives
+  TN = table[2,2];  # true negatives
+  FP = table[1,2];  # false positives
+  FN = table[2,1];  # false negatives
+  acc = (TP + TN)/(TP + TN + FP + FN)
+  return(acc)
+}
+#acc(table("Predictions"= prediction,  "Actual" = dataset.test$airline_sentiment ))
+```
+As expected, our SVM model is significantly better than the more basic NB model.
+
+
+Let's try to tune SVM parameters to further improve the model performance
+```{r}
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           verboseIter = TRUE)
+
+cv.svm <- train(X,y,
+                method="svmRadial",
+                preProc = c("center", "scale"),
+                tuneLength = 5,
+                metric = "Accuracy",
+                trControl = fitControl)
+
+```
+
+```{r}
+cv.svm.prediction <- predict(cv.svm, testing_data)
+
+final_prediction<- cbind(test_data[,1],cv.svm.prediction)
+#table("Predictions"= cv.svm.prediction,  "Actual" = dataset.test$airline_sentiment )
+```
+
+```{r}
+#acc(table("Predictions"= cv.svm.prediction,  "Actual" = dataset.test$airline_sentiment ))
+```
+
+```{r}
+write.csv(final_prediction,file="practice_3_APS_DR_YS_prediction.csv",row.names=F)
+```
+
+
